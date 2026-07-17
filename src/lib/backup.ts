@@ -1,12 +1,19 @@
 import type { AppData } from "./types";
 
-export function downloadBackup(data: AppData) {
-  const payload = {
+export function createBackupPayload(data: AppData) {
+  return {
     exportedAt: new Date().toISOString(),
     app: "investment-os-pwa",
-    version: 1,
-    data
+    version: 2,
+    data: {
+      ...data,
+      aiSettings: { ...data.aiSettings, apiKey: "" }
+    }
   };
+}
+
+export function downloadBackup(data: AppData) {
+  const payload = createBackupPayload(data);
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -28,6 +35,7 @@ export async function parseBackup(file: File): Promise<AppData> {
     rules: data.rules,
     aiSettings: data.aiSettings,
     decisionLogs: data.decisionLogs ?? [],
-    weeklyReviews: data.weeklyReviews ?? []
+    weeklyReviews: data.weeklyReviews ?? [],
+    eventCases: data.eventCases ?? []
   };
 }

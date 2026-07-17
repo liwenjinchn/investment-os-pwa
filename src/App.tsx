@@ -17,6 +17,7 @@ import {
   Trash2
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { EventCenter } from "./EventCenter";
 import { buildPrompt, requestAiDecision } from "./lib/ai";
 import { downloadBackup, parseBackup } from "./lib/backup";
 import {
@@ -31,6 +32,7 @@ import {
   saveWeeklyReview
 } from "./lib/db";
 import { recognizeHoldingsFromImage } from "./lib/ocr";
+import { assessEventCase } from "./lib/eventDecision";
 import { calculateCashRatio, evaluateRules, localDecisionHint, themeExposure } from "./lib/rules";
 import {
   type AiSettings,
@@ -46,7 +48,7 @@ import {
 } from "./lib/types";
 import { generateWeeklyReview } from "./lib/review";
 
-type Tab = "today" | "holdings" | "logs" | "review" | "settings";
+type Tab = "today" | "events" | "holdings" | "review" | "settings";
 
 const markets: Market[] = ["A股", "港股", "美股", "基金", "其他"];
 
@@ -134,21 +136,82 @@ export function App() {
       ) : null}
 
       <main className="main-rail">
-        {tab === "today" ? <Today data={data} reload={reload} setStatus={setStatus} /> : null}
+        {tab === "today" ? <TodayDashboard data={data} onOpenEvents={() => setTab("events")} /> : null}
+        {tab === "events" ? <EventCenter data={data} reload={reload} setStatus={setStatus} /> : null}
         {tab === "holdings" ? <Holdings data={data} reload={reload} setStatus={setStatus} /> : null}
-        {tab === "logs" ? <Logs data={data} /> : null}
         {tab === "review" ? <Review data={data} reload={reload} setStatus={setStatus} /> : null}
         {tab === "settings" ? <SettingsView data={data} reload={reload} setStatus={setStatus} /> : null}
       </main>
 
       <nav className="tabbar" aria-label="主导航">
         <TabButton active={tab === "today"} onClick={() => setTab("today")} icon={<Home size={18} />} label="今日" />
+        <TabButton active={tab === "events"} onClick={() => setTab("events")} icon={<AlertTriangle size={18} />} label="事件" />
         <TabButton active={tab === "holdings"} onClick={() => setTab("holdings")} icon={<BarChart3 size={18} />} label="持仓" />
-        <TabButton active={tab === "logs"} onClick={() => setTab("logs")} icon={<NotebookText size={18} />} label="日志" />
         <TabButton active={tab === "review"} onClick={() => setTab("review")} icon={<ListChecks size={18} />} label="复盘" />
         <TabButton active={tab === "settings"} onClick={() => setTab("settings")} icon={<Settings size={18} />} label="设置" />
       </nav>
     </div>
+  );
+}
+
+function TodayDashboard(props: { data: AppData; onOpenEvents: () => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const active = props.data.eventCases.filter((item) => item.status !== "已复盘");
+  const due = active.filter((item) => item.reviewAt && item.reviewAt <= today);
+  const blocked = active.filter((item) => assessEventCase(item, props.data.holdings, props.data.rules).readiness === "blocked");
+  const monitoring = active.filter((item) => item.status === "监控中");
+  const tone = due.length ? "danger" : blocked.length ? "warn" : "ok";
+  const headline = due.length ? `${due.length} 个事件今天到期` : blocked.length ? `${blocked.length} 个研判尚未闭合` : active.length ? "只处理下一触发器" : "没有事件，不制造动作";
+
+  return (
+    <section className="rail-stack">
+      <section className={`hero-strip ${tone}`}>
+        <div className="hero-copy">
+          <span>今日决策台</span>
+          <strong>{headline}</strong>
+          <p>{due.length ? "先追加实际结果，再判断原来的证据、概率和动作是否有效。" : "新闻不是动作。只有证据、情景和组合纪律同时闭合，事件才进入决策。"}</p>
+        </div>
+        <div className="hero-score">
+          <small>待办</small>
+          <b>{due.length + blocked.length}</b>
+        </div>
+      </section>
+
+      <section className="metric-grid">
+        <Metric label="进行中" value={`${active.length}`} />
+        <Metric label="监控中" value={`${monitoring.length}`} />
+        <Metric label="到期复盘" value={`${due.length}`} accent={due.length > 0} />
+        <Metric label="证据缺口" value={`${blocked.length}`} accent={blocked.length > 0} />
+      </section>
+
+      <section className="panel today-event-panel">
+        <PanelTitle icon={<AlertTriangle size={18} />} title="下一项事件工作" />
+        {active.length ? (
+          <div className="today-event-list">
+            {active.slice(0, 3).map((item) => {
+              const assessment = assessEventCase(item, props.data.holdings, props.data.rules);
+              return (
+                <div className="today-event-row" key={item.id}>
+                  <div><span>{item.status} · {assessment.evidenceLabel}</span><strong>{item.title || "未命名事件"}</strong><p>{item.nextTrigger || assessment.gates[0] || "等待下一触发器"}</p></div>
+                  <b>{item.reviewAt || "待定"}</b>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="empty">组合当前没有需要研判的事件。这不是空白，而是允许保持不动。</p>
+        )}
+        <button className="primary-button full" type="button" onClick={props.onOpenEvents}>
+          <ArrowRight size={16} /> {active.length ? "打开事件队列" : "开始第一份事件研判"}
+        </button>
+      </section>
+
+      <section className="panel discipline-manifesto">
+        <span>INVESTMENT OS / EVENT RULE</span>
+        <blockquote>先证明它会改变论点，再讨论它会不会改变仓位。</blockquote>
+        <div><small>本地存储</small><small>事实 / 假设 / 判断分离</small><small>概率必须 = 100%</small><small>保留事后复盘</small></div>
+      </section>
+    </section>
   );
 }
 
@@ -554,6 +617,21 @@ function Review(props: { data: AppData; reload: () => Promise<void>; setStatus: 
         </button>
       </section>
 
+      <section className="panel">
+        <PanelTitle icon={<NotebookText size={18} />} title="近期决策记录" />
+        {props.data.decisionLogs.length ? (
+          <div className="log-list">
+            {props.data.decisionLogs.slice(0, 8).map((log) => (
+              <article className="log-row" key={log.id}>
+                <div><time>{formatTime(log.createdAt)}</time><strong>{log.action} · {log.impactLevel}</strong></div>
+                <p>{log.eventText}</p>
+                <small>{log.finalDecision}</small>
+              </article>
+            ))}
+          </div>
+        ) : <p className="empty">还没有确认过的事件决策。</p>}
+      </section>
+
       {props.data.weeklyReviews.length ? (
         props.data.weeklyReviews.map((review) => (
           <section className="panel review-card" key={review.id}>
@@ -608,7 +686,13 @@ function SettingsView(props: { data: AppData; reload: () => Promise<void>; setSt
     if (!file) return;
     try {
       const next = await parseBackup(file);
-      await replaceAllData(next);
+      await replaceAllData({
+        ...next,
+        aiSettings: {
+          ...next.aiSettings,
+          apiKey: next.aiSettings.apiKey || props.data.aiSettings.apiKey
+        }
+      });
       props.setStatus("备份已导入并恢复。");
       await props.reload();
     } catch (error) {

@@ -1,4 +1,4 @@
-const CACHE_NAME = "investment-os-pwa-v1";
+const CACHE_NAME = "investment-os-pwa-v2-event-decision";
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
 const STATIC_ASSETS = [
   SCOPE_PATH,
